@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>MaziPose</title>
+  <style>
+    /* Fill the screen, no scrollbars */
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: linear-gradient(to bottom, #000000, #1a1a1a);
+      /* black gradient */
+      font-family: "Segoe UI", Roboto, sans-serif;
+    }
+
+    /* Container matches camera's aspect ratio (set in JS) */
+    .camera-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      aspect-ratio: auto;
+      /* We'll set the actual ratio from JS */
+      background: black;
+      /* letterbox or pillarbox fill */
+    }
+
+    /* Video & Canvas overlap exactly.
+       We'll do the mirror transform in JS. */
+    #video,
+    #output {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      /* no distortion */
+    }
+
+    /* Hide raw video if you only want the final overlay on the canvas */
+    #video {
+      display: none;
+      z-index: 1;
+    }
+
+    /* Canvas on top, no border */
+    #output {
+      z-index: 2;
+      border: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="camera-container" id="cameraContainer">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="output"></canvas>
+  </div>
+
+  <!-- Mediapipe Pose, Drawing Utils, and Camera Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3"></script>
+
+  <script>
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('output');
+    const canvasCtx = canvasElement.getContext('2d');
+    const container = document.getElementById('cameraContainer');
+
+    /**
+     * Keep the canvas resolution & the container's aspect ratio
+     * in sync with the actual camera feed, so there's no distortion.
+     */
+    function syncCanvasToVideo() {
+      const { videoWidth, videoHeight } = videoElement;
+      if (!videoWidth || !videoHeight) return;
+
+      // Match the canvas pixel size to the actual video feed
+      canvasElement.width = videoWidth;
+      canvasElement.height = videoHeight;
+
+      // Update container's aspect-ratio to match
+      container.style.aspectRatio = `${videoWidth} / ${videoHeight}`;
+    }
+
+    /**
+     * Called each time Mediapipe Pose produces detection results.
+     */
+    function onResults(results) {
+      // If camera resolution changes, keep ratio correct
+      syncCanvasToVideo();
+
+      const width = canvasElement.width;
+      const height = canvasElement.height;
+
+      // 1) Mirror (flip horizontally) the camera image and pose
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, width, height);
+
+      // Apply mirror transform
+      canvasCtx.translate(width, 0);
+      canvasCtx.scale(-1, 1);
+
+      // Draw the mirrored video feed
+      canvasCtx.drawImage(results.image, 0, 0, width, height);
+
+      // Draw the mirrored pose skeleton & landmarks
+      if (results.poseLandmarks) {
+        // Connectors in sky blue
+        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS,
+          { color: '#00bfff', lineWidth: 4 });
+        // Landmarks in a lighter shade
+        drawLandmarks(canvasCtx, results.poseLandmarks,
+          { color: '#87ceeb', lineWidth: 2 });
+      }
+
+      // Done with mirrored content
+      canvasCtx.restore();
+
+      // 2) Draw "MaziPose" text normally (not mirrored)
+      canvasCtx.save();
+      canvasCtx.font = `bold ${Math.min(width, height) / 10}px sans-serif`;
+      canvasCtx.fillStyle = '#ffffff'; // white text
+      canvasCtx.textAlign = 'center';
+      canvasCtx.textBaseline = 'middle';
+
+      // Optional shadow for legibility
+      canvasCtx.shadowColor = '#000000';
+      canvasCtx.shadowBlur = 8;
+
+      // Position in the middle of the canvas
+      canvasCtx.fillText('MaziPose', width / 2, height / 2);
+      canvasCtx.restore();
+    }
+
+    // Initialize Mediapipe Pose
+    const pose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${file}`
+    });
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      smoothSegmentation: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    pose.onResults(onResults);
+
+    // Initialize the camera. 
+    // No explicit width/height => browser negotiates best resolution.
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await pose.send({ image: videoElement });
+      }
+    });
+
+    // Once video metadata is loaded, sync canvas
+    videoElement.addEventListener('loadedmetadata', syncCanvasToVideo);
+
+    // Start the camera
+    camera.start();
+  </script>
+</body>
+
+</html>
